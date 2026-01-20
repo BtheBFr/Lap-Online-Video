@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lap Video Online — Мгновенные видеозвонки</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="style.css">
+    <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
+    <link rel="icon" type="image/x-icon" href="https://img.icons8.com/color/96/000000/video-call.png">
+</head>
+<body>
+    <!-- Шапка -->
+    <header class="header">
+        <div class="logo">
+            <div class="logo-icon">
+                <i class="fas fa-video"></i>
+            </div>
+            <div class="logo-text">
+                <h1>Lap Video Online</h1>
+                <div class="subtitle">
+                    <span class="brand">Lap.comp</span>
+                    <span class="separator">×</span>
+                    <span class="brand">B the B</span>
+                </div>
+            </div>
+        </div>
+        <div class="room-info">
+            <div class="room-id">
+                <i class="fas fa-hashtag"></i>
+                <span id="roomNumber">Загрузка...</span>
+            </div>
+            <button class="copy-btn" id="copyRoomBtn">
+                <i class="fas fa-copy"></i> Копировать ссылку
+            </button>
+        </div>
+    </header>
+
+    <!-- Основной контент -->
+    <main class="container">
+        <div class="main-title">
+            <h2><i class="fas fa-bolt"></i> Мгновенный видеозвонок</h2>
+            <p>Приветствуем в Lap Video Online! Ваша видеоконференция уже началась.</p>
+            <p class="share-instruction">Отправьте ссылку собеседнику, чтобы подключиться</p>
+        </div>
+
+        <!-- Видео контейнер -->
+        <div class="video-container">
+            <!-- Ваше видео -->
+            <div class="video-box">
+                <div class="video-label user-label">
+                    <i class="fas fa-user"></i> Вы
+                    <span class="status-indicator" id="localStatus">
+                        <i class="fas fa-circle"></i> онлайн
+                    </span>
+                </div>
+                <video id="localVideo" class="video-element" autoplay playsinline muted></video>
+                <div class="video-stats">
+                    <span><i class="fas fa-microphone"></i> <span id="micStatus">вкл</span></span>
+                    <span><i class="fas fa-video"></i> <span id="cameraStatus">вкл</span></span>
+                </div>
+            </div>
+
+            <!-- Видео собеседника -->
+            <div class="video-box">
+                <div class="video-label remote-label">
+                    <i class="fas fa-users"></i> Собеседник
+                    <span class="status-indicator" id="remoteStatus">
+                        <i class="fas fa-circle"></i> ожидание
+                    </span>
+                </div>
+                <video id="remoteVideo" class="video-element" autoplay playsinline></video>
+                <div class="waiting-message" id="waitingMessage">
+                    <i class="fas fa-user-clock"></i>
+                    <h3>Ожидание подключения</h3>
+                    <p>Отправьте ссылку на комнату вашему собеседнику</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Панель управления -->
+        <div class="controls">
+            <button class="control-btn btn-camera" id="toggleCamera">
+                <i class="fas fa-video"></i>
+                <span>Выключить камеру</span>
+            </button>
+            
+            <button class="control-btn btn-mic" id="toggleMic">
+                <i class="fas fa-microphone"></i>
+                <span>Выключить микрофон</span>
+            </button>
+            
+            <button class="control-btn btn-screen" id="shareScreen">
+                <i class="fas fa-desktop"></i>
+                <span>Поделиться экраном</span>
+            </button>
+            
+            <button class="control-btn btn-rotate" id="rotateCamera">
+                <i class="fas fa-sync-alt"></i>
+                <span>Перевернуть камеру</span>
+            </button>
+            
+            <button class="control-btn btn-invite" id="inviteBtn">
+                <i class="fas fa-user-plus"></i>
+                <span>Пригласить</span>
+            </button>
+            
+            <button class="control-btn btn-end" id="endCall">
+                <i class="fas fa-phone-slash"></i>
+                <span>Завершить</span>
+            </button>
+        </div>
+
+        <!-- Информационная панель -->
+        <div class="info-panel">
+            <div class="info-box">
+                <h3><i class="fas fa-info-circle"></i> Как подключиться</h3>
+                <ol>
+                    <li>Скопируйте ссылку на комнату (кнопка выше)</li>
+                    <li>Отправьте её собеседнику через мессенджер</li>
+                    <li>Когда он перейдёт по ссылке — соединение установится автоматически</li>
+                </ol>
+            </div>
+            
+            <div class="info-box">
+                <h3><i class="fas fa-cogs"></i> Статус системы</h3>
+                <div class="status-list">
+                    <div class="status-item">
+                        <span class="status-dot active"></span>
+                        <span>WebRTC:</span>
+                        <span class="status-value" id="webrtcStatus">Активен</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-dot active"></span>
+                        <span>P2P соединение:</span>
+                        <span class="status-value" id="p2pStatus">Готово</span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-dot active"></span>
+                        <span>Видео:</span>
+                        <span class="status-value" id="videoTechStatus">WebRTC</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Футер -->
+    <footer class="footer">
+        <div class="footer-content">
+            <div class="footer-logo">
+                <i class="fas fa-video"></i>
+                <span>Lap Video Online</span>
+            </div>
+            <div class="footer-info">
+                <span>© 2023 Lap.comp × B the B. Все права защищены.</span>
+                <span class="footer-separator">|</span>
+                <span>Без регистрации. Без ограничений.</span>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Уведомления -->
+    <div class="notification" id="notification">
+        <span id="notificationText"></span>
+    </div>
+
+    <!-- Модальное окно приглашения -->
+    <div class="modal" id="inviteModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><i class="fas fa-user-plus"></i> Пригласить в звонок</h3>
+                <button class="close-modal" id="closeModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>Отправьте эту ссылку собеседнику:</p>
+                <div class="link-container">
+                    <input type="text" id="inviteLink" readonly>
+                    <button class="copy-link-btn" id="copyInviteLink">
+                        <i class="fas fa-copy"></i>
+                    </button>
+                </div>
+                <div class="share-buttons">
+                    <button class="share-btn whatsapp">
+                        <i class="fab fa-whatsapp"></i> WhatsApp
+                    </button>
+                    <button class="share-btn telegram">
+                        <i class="fab fa-telegram"></i> Telegram
+                    </button>
+                    <button class="share-btn email">
+                        <i class="fas fa-envelope"></i> Email
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
