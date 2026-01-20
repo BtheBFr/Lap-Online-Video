@@ -1,14 +1,18 @@
+// Lap Video Online - полный скрипт
+// Оптимизирован для телефонов и ПК
+
 // Основные переменные
-let localStream;
-let remoteStream;
-let peer;
-let currentPeerId;
-let roomId;
+let localStream = null;
+let remoteStream = null;
+let peer = null;
+let currentPeerId = null;
+let roomId = null;
 let screenStream = null;
 let isCameraOn = true;
 let isMicOn = true;
 let isScreenSharing = false;
 let isCameraFlipped = false;
+let currentCall = null;
 
 // DOM элементы
 const localVideo = document.getElementById('localVideo');
@@ -34,31 +38,43 @@ const inviteLink = document.getElementById('inviteLink');
 const copyInviteLink = document.getElementById('copyInviteLink');
 const p2pStatus = document.getElementById('p2pStatus');
 
-// Инициализация при загрузке страницы
-window.addEventListener('load', async () => {
-    showNotification('Инициализация видеозвонка...');
+// Утилиты
+function showNotification(message, type = 'success') {
+    notificationText.textContent = message;
+    notification.style.background = type === 'error' 
+        ? 'linear-gradient(90deg, #ef4444, #f87171)'
+        : type === 'warning'
+        ? 'linear-gradient(90deg, #f59e0b, #fbbf24)'
+        : 'linear-gradient(90deg, #10b981, #34d399)';
     
-    // Генерация ID комнаты из URL или создание нового
-    roomId = getRoomIdFromUrl() || generateRoomId();
-    roomNumber.textContent = roomId;
-    
-    // Обновление URL с ID комнаты
-    updateUrlWithRoomId(roomId);
-    
-    // Инициализация Peer соединения
-    await initPeerConnection();
-    
-    // Запуск локальной камеры
-    await startLocalCamera();
-    
-    // Настройка обработчиков событий
-    setupEventListeners();
-    
-    showNotification('Готово к видеозвонку! Отправьте ссылку собеседнику');
-});
+    notification.classList.add('show');
+    setTimeout(() => notification.classList.remove('show'), 4000);
+}
+
+function copyToClipboard(text) {
+    navigator.clipboard.writeText(text).then(() => {
+        console.log('Скопировано:', text);
+    }).catch(err => {
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+    });
+}
 
 // Генерация ID комнаты
 function generateRoomId() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlRoomId = urlParams.get('room');
+    
+    // Если в URL уже есть ID комнаты (для подключения), используем его
+    if (urlRoomId) {
+        return urlRoomId;
+    }
+    
+    // Иначе генерируем новый уникальный ID для создания комнаты
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
     let result = '';
     for (let i = 0; i < 8; i++) {
@@ -67,132 +83,25 @@ function generateRoomId() {
     return result;
 }
 
-// Получение ID комнаты из URL
-function getRoomIdFromUrl() {
-    const urlParams = new URLSearchParams(window.location.search);
-    return urlParams.get('room');
-}
-
-// Обновление URL с ID комнаты
+// Обновление URL
 function updateUrlWithRoomId(id) {
-    const newUrl = window.location.origin + window.location.pathname + '?room=' + id;
+    const newUrl = `${window.location.origin}${window.location.pathname}?room=${id}`;
     window.history.replaceState({}, document.title, newUrl);
     inviteLink.value = newUrl;
+    return newUrl;
 }
 
-// Инициализация Peer соединения
-async function initPeerConnection() {
-    try {
-        // Используем бесплатный PeerJS сервер
-        peer = new Peer(roomId, {
-            host: 'peerjs-server-production-b727.up.railway.app',
-            port: 443,
-            path: '/peerjs',
-            secure: true,
-            debug: 3
-        });
-            
-        peer.on('open', (id) => {
-            console.log('Peer соединение установлено. ID:', id);
-            currentPeerId = id;
-            p2pStatus.textContent = 'Подключено';
-            p2pStatus.style.color = '#10b981';
-            showNotification('P2P соединение готово');
-        });
-        
-        peer.on('connection', (conn) => {
-            console.log('Входящее соединение:', conn.peer);
-        });
-        
-        peer.on('call', async (call) => {
-            console.log('Входящий видеозвонок от:', call.peer);
-            showNotification('Входящий видеозвонок...');
-            
-            // Отвечаем на звонок с локальным потоком
-            call.answer(localStream);
-            
-            // Получаем удаленный поток
-            call.on('stream', (stream) => {
-                console.log('Получен удаленный видеопоток');
-                remoteStream = stream;
-                remoteVideo.srcObject = stream;
-                remoteStatus.innerHTML = '<i class="fas fa-circle"></i> подключен';
-                remoteStatus.style.color = '#10b981';
-                waitingMessage.style.display = 'none';
-                showNotification('Собеседник подключился!');
-            });
-            
-            call.on('close', () => {
-                console.log('Звонок завершен');
-                handleCallEnd();
-            });
-            
-            call.on('error', (err) => {
-                console.error('Ошибка звонка:', err);
-                showNotification('Ошибка соединения', 'error');
-            });
-        });
-        
-        peer.on('error', (err) => {
-            console.error('Peer ошибка:', err);
-            showNotification('Ошибка P2P соединения', 'error');
-        });
-        
-        // Автоподключение при наличии roomId в URL (для второго участника)
-        const urlRoomId = getRoomIdFromUrl();
-        if (urlRoomId && urlRoomId !== roomId) {
-            setTimeout(() => connectToPeer(urlRoomId), 2000);
-        }
-        
-    } catch (error) {
-        console.error('Ошибка инициализации Peer:', error);
-        showNotification('Не удалось установить P2P соединение', 'error');
-    }
-}
-
-// Подключение к другому пиру
-async function connectToPeer(peerId) {
-    if (!localStream) {
-        await startLocalCamera();
-    }
-    
-    try {
-        showNotification('Подключение к собеседнику...');
-        const call = peer.call(peerId, localStream);
-        
-        call.on('stream', (stream) => {
-            console.log('Получен удаленный видеопоток');
-            remoteStream = stream;
-            remoteVideo.srcObject = stream;
-            remoteStatus.innerHTML = '<i class="fas fa-circle"></i> подключен';
-            remoteStatus.style.color = '#10b981';
-            waitingMessage.style.display = 'none';
-            showNotification('Соединение установлено!');
-        });
-        
-        call.on('close', () => {
-            console.log('Звонок завершен');
-            handleCallEnd();
-        });
-        
-        call.on('error', (err) => {
-            console.error('Ошибка звонка:', err);
-            showNotification('Ошибка подключения', 'error');
-        });
-        
-    } catch (error) {
-        console.error('Ошибка подключения:', error);
-        showNotification('Не удалось подключиться', 'error');
-    }
-}
-
-// Запуск локальной камеры
+// Запуск камеры (адаптировано для телефонов)
 async function startLocalCamera() {
     try {
+        // Оптимизация для телефонов
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        
         const constraints = {
             video: {
-                width: { ideal: 1280 },
-                height: { ideal: 720 },
+                width: { ideal: isMobile ? 640 : 1280 },
+                height: { ideal: isMobile ? 480 : 720 },
+                frameRate: { ideal: 24 },
                 facingMode: 'user'
             },
             audio: {
@@ -205,239 +114,178 @@ async function startLocalCamera() {
         localStream = await navigator.mediaDevices.getUserMedia(constraints);
         localVideo.srcObject = localStream;
         
+        // Адаптация видео для телефонов
+        localVideo.style.objectFit = 'cover';
+        
+        // Активируем кнопки
+        toggleCameraBtn.disabled = false;
+        toggleMicBtn.disabled = false;
+        shareScreenBtn.disabled = false;
+        
         localStatus.innerHTML = '<i class="fas fa-circle"></i> онлайн';
         localStatus.style.color = '#10b981';
         
-        console.log('Локальная камера активирована');
+        showNotification('Камера активирована');
         return true;
         
     } catch (error) {
-        console.error('Ошибка доступа к камере:', error);
-        showNotification('Не удалось получить доступ к камере', 'error');
+        console.error('Ошибка камеры:', error);
+        
+        // Пробуем только аудио, если камера недоступна
+        try {
+            localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            localVideo.style.display = 'none';
+            showNotification('Камера недоступна. Работаем только с аудио', 'warning');
+            return true;
+        } catch (audioError) {
+            showNotification('Не удалось получить доступ к камере и микрофону', 'error');
+            return false;
+        }
+    }
+}
+
+// Инициализация Peer соединения
+async function initPeerConnection() {
+    try {
+        // Генерируем ID комнаты
+        roomId = generateRoomId();
+        roomNumber.textContent = roomId;
+        
+        // Обновляем URL
+        updateUrlWithRoomId(roomId);
+        
+        // Для мобильных устройств используем более стабильные настройки
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        
+        // Инициализируем Peer с ТВОИМ сервером
+        peer = new Peer(roomId, {
+            host: 'peerjs-server-production-b727.up.railway.app',
+            port: 443,
+            path: '/peerjs',
+            secure: true,
+            debug: isMobile ? 0 : 1, // Меньше логов на телефоне для производительности
+            config: {
+                iceServers: [
+                    { urls: 'stun:stun.l.google.com:19302' },
+                    { urls: 'stun:global.stun.twilio.com:3478' }
+                ]
+            }
+        });
+        
+        // События Peer
+        peer.on('open', (id) => {
+            currentPeerId = id;
+            p2pStatus.textContent = 'Готово';
+            p2pStatus.style.color = '#10b981';
+            
+            // Для мобильных: показываем уведомление о готовности
+            if (isMobile) {
+                showNotification('Готово к звонку!');
+            }
+            
+            console.log('Peer ID:', id);
+        });
+        
+        peer.on('error', (err) => {
+            console.error('Peer ошибка:', err);
+            
+            // Автопереподключение для мобильных
+            if (isMobile && err.type === 'network') {
+                setTimeout(() => {
+                    showNotification('Переподключение...', 'warning');
+                    initPeerConnection();
+                }, 3000);
+            } else {
+                showNotification('Ошибка соединения: ' + err.message, 'error');
+            }
+        });
+        
+        // Обработка входящих звонков
+        peer.on('call', async (call) => {
+            showNotification('Входящий звонок...');
+            
+            // Отвечаем на звонок с нашим потоком
+            call.answer(localStream);
+            currentCall = call;
+            
+            // Получаем удалённый поток
+            call.on('stream', (stream) => {
+                remoteStream = stream;
+                remoteVideo.srcObject = stream;
+                remoteStatus.innerHTML = '<i class="fas fa-circle"></i> подключен';
+                remoteStatus.style.color = '#10b981';
+                waitingMessage.style.display = 'none';
+                showNotification('Собеседник подключился!');
+            });
+            
+            call.on('close', () => {
+                handleCallEnd();
+            });
+            
+            call.on('error', (err) => {
+                console.error('Ошибка звонка:', err);
+                showNotification('Ошибка звонка', 'error');
+            });
+        });
+        
+        // Автоматическое подключение, если в URL есть ID другой комнаты
+        const urlParams = new URLSearchParams(window.location.search);
+        const connectToRoomId = urlParams.get('room');
+        
+        if (connectToRoomId && connectToRoomId !== roomId) {
+            // Ждём инициализации камеры перед подключением
+            setTimeout(() => {
+                connectToPeer(connectToRoomId);
+            }, 1000);
+        }
+        
+        return true;
+        
+    } catch (error) {
+        console.error('Ошибка инициализации:', error);
+        showNotification('Ошибка инициализации звонка', 'error');
         return false;
     }
 }
 
-// Обработчики событий
-function setupEventListeners() {
-    // Переключение камеры
-    toggleCameraBtn.addEventListener('click', toggleCamera);
-    
-    // Переключение микрофона
-    toggleMicBtn.addEventListener('click', toggleMicrophone);
-    
-    // Демонстрация экрана
-    shareScreenBtn.addEventListener('click', toggleScreenShare);
-    
-    // Переворот камеры
-    rotateCameraBtn.addEventListener('click', rotateCamera);
-    
-    // Приглашение
-    inviteBtn.addEventListener('click', () => {
-        inviteModal.classList.add('active');
-    });
-    
-    // Завершение звонка
-    endCallBtn.addEventListener('click', endCall);
-    
-    // Копирование ссылки на комнату
-    copyRoomBtn.addEventListener('click', copyRoomLink);
-    
-    // Закрытие модального окна
-    closeModal.addEventListener('click', () => {
-        inviteModal.classList.remove('active');
-    });
-    
-    // Копирование ссылки приглашения
-    copyInviteLink.addEventListener('click', () => {
-        copyToClipboard(inviteLink.value);
-        showNotification('Ссылка скопирована в буфер обмена');
-    });
-    
-    // Кнопки шаринга
-    document.querySelectorAll('.share-btn').forEach(btn => {
-        btn.addEventListener('click', function() {
-            const platform = this.classList[1];
-            shareLink(platform);
-        });
-    });
-    
-    // Клик вне модального окна
-    window.addEventListener('click', (e) => {
-        if (e.target === inviteModal) {
-            inviteModal.classList.remove('active');
-        }
-    });
-}
-
-// Переключение камеры
-function toggleCamera() {
-    if (!localStream) return;
-    
-    const videoTrack = localStream.getVideoTracks()[0];
-    if (videoTrack) {
-        isCameraOn = !isCameraOn;
-        videoTrack.enabled = isCameraOn;
-        
-        const icon = toggleCameraBtn.querySelector('i');
-        const text = toggleCameraBtn.querySelector('span');
-        
-        if (isCameraOn) {
-            icon.className = 'fas fa-video';
-            text.textContent = 'Выключить камеру';
-            cameraStatus.textContent = 'вкл';
-            cameraStatus.style.color = '#10b981';
-            showNotification('Камера включена');
-        } else {
-            icon.className = 'fas fa-video-slash';
-            text.textContent = 'Включить камеру';
-            cameraStatus.textContent = 'выкл';
-            cameraStatus.style.color = '#ef4444';
-            showNotification('Камера выключена');
-        }
+// Подключение к другому участнику
+async function connectToPeer(peerId) {
+    if (!localStream) {
+        await startLocalCamera();
     }
-}
-
-// Переключение микрофона
-function toggleMicrophone() {
-    if (!localStream) return;
     
-    const audioTrack = localStream.getAudioTracks()[0];
-    if (audioTrack) {
-        isMicOn = !isMicOn;
-        audioTrack.enabled = isMicOn;
-        
-        const icon = toggleMicBtn.querySelector('i');
-        const text = toggleMicBtn.querySelector('span');
-        
-        if (isMicOn) {
-            icon.className = 'fas fa-microphone';
-            text.textContent = 'Выключить микрофон';
-            micStatus.textContent = 'вкл';
-            micStatus.style.color = '#10b981';
-            showNotification('Микрофон включен');
-        } else {
-            icon.className = 'fas fa-microphone-slash';
-            text.textContent = 'Включить микрофон';
-            micStatus.textContent = 'выкл';
-            micStatus.style.color = '#ef4444';
-            showNotification('Микрофон выключен');
-        }
+    if (!peer || peer.disconnected) {
+        showNotification('Соединение не готово', 'error');
+        return;
     }
-}
-
-// Демонстрация экрана
-async function toggleScreenShare() {
+    
     try {
-        if (!isScreenSharing) {
-            // Запрос на демонстрацию экрана
-            screenStream = await navigator.mediaDevices.getDisplayMedia({
-                video: {
-                    cursor: 'always',
-                    displaySurface: 'monitor'
-                },
-                audio: {
-                    echoCancellation: true,
-                    noiseSuppression: true,
-                    autoGainControl: true
-                }
-            });
-            
-            // Заменяем видеотрек в локальном потоке
-            const videoTrack = screenStream.getVideoTracks()[0];
-            const localVideoTrack = localStream.getVideoTracks()[0];
-            
-            localStream.removeTrack(localVideoTrack);
-            localStream.addTrack(videoTrack);
-            localVideo.srcObject = localStream;
-            
-            isScreenSharing = true;
-            
-            const icon = shareScreenBtn.querySelector('i');
-            const text = shareScreenBtn.querySelector('span');
-            icon.className = 'fas fa-stop-circle';
-            text.textContent = 'Остановить демонстрацию';
-            
-            showNotification('Демонстрация экрана запущена');
-            
-            // Обработка остановки демонстрации экрана
-            videoTrack.onended = () => {
-                toggleScreenShare();
-            };
-            
-        } else {
-            // Возвращаем камеру
-            if (screenStream) {
-                screenStream.getTracks().forEach(track => track.stop());
-            }
-            
-            // Получаем поток с камеры
-            const cameraStream = await navigator.mediaDevices.getUserMedia({
-                video: true,
-                audio: false
-            });
-            
-            const cameraVideoTrack = cameraStream.getVideoTracks()[0];
-            const currentVideoTrack = localStream.getVideoTracks()[0];
-            
-            localStream.removeTrack(currentVideoTrack);
-            localStream.addTrack(cameraVideoTrack);
-            localVideo.srcObject = localStream;
-            
-            isScreenSharing = false;
-            
-            const icon = shareScreenBtn.querySelector('i');
-            const text = shareScreenBtn.querySelector('span');
-            icon.className = 'fas fa-desktop';
-            text.textContent = 'Поделиться экраном';
-            
-            showNotification('Демонстрация экрана остановлена');
-        }
+        showNotification('Подключение...');
+        
+        const call = peer.call(peerId, localStream);
+        currentCall = call;
+        
+        call.on('stream', (stream) => {
+            remoteStream = stream;
+            remoteVideo.srcObject = stream;
+            remoteStatus.innerHTML = '<i class="fas fa-circle"></i> подключен';
+            remoteStatus.style.color = '#10b981';
+            waitingMessage.style.display = 'none';
+            showNotification('Подключено!');
+        });
+        
+        call.on('close', () => {
+            handleCallEnd();
+        });
+        
+        call.on('error', (err) => {
+            console.error('Ошибка подключения:', err);
+            showNotification('Не удалось подключиться', 'error');
+        });
         
     } catch (error) {
-        console.error('Ошибка демонстрации экрана:', error);
-        showNotification('Не удалось начать демонстрацию экрана', 'error');
-    }
-}
-
-// Переворот камеры
-function rotateCamera() {
-    isCameraFlipped = !isCameraFlipped;
-    
-    if (isCameraFlipped) {
-        localVideo.classList.add('flipped');
-        showNotification('Камера перевернута');
-    } else {
-        localVideo.classList.remove('flipped');
-        showNotification('Камера в обычном режиме');
-    }
-}
-
-// Завершение звонка
-function endCall() {
-    if (confirm('Завершить видеозвонок?')) {
-        handleCallEnd();
-        showNotification('Звонок завершен');
-        
-        // Останавливаем все медиапотоки
-        if (localStream) {
-            localStream.getTracks().forEach(track => track.stop());
-        }
-        if (remoteStream) {
-            remoteStream.getTracks().forEach(track => track.stop());
-        }
-        if (screenStream) {
-            screenStream.getTracks().forEach(track => track.stop());
-        }
-        
-        // Сбрасываем видео элементы
-        localVideo.srcObject = null;
-        remoteVideo.srcObject = null;
-        
-        // Перезагрузка страницы для нового звонка
-        setTimeout(() => {
-            window.location.href = window.location.origin + window.location.pathname;
-        }, 2000);
+        console.error('Ошибка:', error);
+        showNotification('Ошибка подключения', 'error');
     }
 }
 
@@ -447,34 +295,175 @@ function handleCallEnd() {
     waitingMessage.style.display = 'block';
     remoteStatus.innerHTML = '<i class="fas fa-circle"></i> отключен';
     remoteStatus.style.color = '#ef4444';
+    currentCall = null;
 }
 
-// Копирование ссылки на комнату
+// Управление камерой (оптимизировано для телефонов)
+function toggleCamera() {
+    if (!localStream) return;
+    
+    const videoTracks = localStream.getVideoTracks();
+    if (videoTracks.length > 0) {
+        isCameraOn = !isCameraOn;
+        videoTracks[0].enabled = isCameraOn;
+        
+        const icon = toggleCameraBtn.querySelector('i');
+        const text = toggleCameraBtn.querySelector('span');
+        
+        if (isCameraOn) {
+            icon.className = 'fas fa-video';
+            text.textContent = 'Выкл. камеру';
+            cameraStatus.textContent = 'вкл';
+            cameraStatus.style.color = '#10b981';
+            showNotification('Камера включена');
+        } else {
+            icon.className = 'fas fa-video-slash';
+            text.textContent = 'Вкл. камеру';
+            cameraStatus.textContent = 'выкл';
+            cameraStatus.style.color = '#ef4444';
+            showNotification('Камера выключена');
+        }
+    }
+}
+
+// Управление микрофоном
+function toggleMicrophone() {
+    if (!localStream) return;
+    
+    const audioTracks = localStream.getAudioTracks();
+    if (audioTracks.length > 0) {
+        isMicOn = !isMicOn;
+        audioTracks[0].enabled = isMicOn;
+        
+        const icon = toggleMicBtn.querySelector('i');
+        const text = toggleMicBtn.querySelector('span');
+        
+        if (isMicOn) {
+            icon.className = 'fas fa-microphone';
+            text.textContent = 'Выкл. микрофон';
+            micStatus.textContent = 'вкл';
+            micStatus.style.color = '#10b981';
+            showNotification('Микрофон включен');
+        } else {
+            icon.className = 'fas fa-microphone-slash';
+            text.textContent = 'Вкл. микрофон';
+            micStatus.textContent = 'выкл';
+            micStatus.style.color = '#ef4444';
+            showNotification('Микрофон выключен');
+        }
+    }
+}
+
+// Демонстрация экрана (только для десктопов)
+async function toggleScreenShare() {
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    
+    if (isMobile) {
+        showNotification('Демонстрация экрана недоступна на телефоне', 'warning');
+        return;
+    }
+    
+    try {
+        if (!isScreenSharing) {
+            screenStream = await navigator.mediaDevices.getDisplayMedia({
+                video: { cursor: 'always' },
+                audio: true
+            });
+            
+            const screenTrack = screenStream.getVideoTracks()[0];
+            
+            // Заменяем видеотрек
+            const localVideoTrack = localStream.getVideoTracks()[0];
+            localStream.removeTrack(localVideoTrack);
+            localStream.addTrack(screenTrack);
+            localVideo.srcObject = localStream;
+            
+            isScreenSharing = true;
+            
+            const icon = shareScreenBtn.querySelector('i');
+            const text = shareScreenBtn.querySelector('span');
+            icon.className = 'fas fa-stop-circle';
+            text.textContent = 'Стоп экран';
+            
+            showNotification('Демонстрация экрана');
+            
+            // Остановка по завершению
+            screenTrack.onended = () => {
+                if (isScreenSharing) {
+                    toggleScreenShare();
+                }
+            };
+            
+        } else {
+            // Возвращаем камеру
+            screenStream.getTracks().forEach(track => track.stop());
+            
+            const cameraStream = await navigator.mediaDevices.getUserMedia({ video: true });
+            const cameraTrack = cameraStream.getVideoTracks()[0];
+            
+            localStream.removeTrack(localStream.getVideoTracks()[0]);
+            localStream.addTrack(cameraTrack);
+            localVideo.srcObject = localStream;
+            
+            isScreenSharing = false;
+            
+            const icon = shareScreenBtn.querySelector('i');
+            const text = shareScreenBtn.querySelector('span');
+            icon.className = 'fas fa-desktop';
+            text.textContent = 'Поделиться экраном';
+            
+            showNotification('Экран остановлен');
+        }
+    } catch (error) {
+        console.error('Ошибка экрана:', error);
+        showNotification('Ошибка демонстрации экрана', 'error');
+    }
+}
+
+// Переворот камеры
+function rotateCamera() {
+    isCameraFlipped = !isCameraFlipped;
+    localVideo.style.transform = isCameraFlipped ? 'scaleX(-1)' : 'scaleX(1)';
+    showNotification(isCameraFlipped ? 'Камера перевёрнута' : 'Камера нормально');
+}
+
+// Завершение звонка
+function endCall() {
+    if (confirm('Завершить видеозвонок?')) {
+        if (currentCall) {
+            currentCall.close();
+        }
+        
+        if (peer) {
+            peer.destroy();
+        }
+        
+        handleCallEnd();
+        
+        if (localStream) {
+            localStream.getTracks().forEach(track => track.stop());
+        }
+        
+        showNotification('Звонок завершён');
+        
+        // Перезагрузка через 2 секунды
+        setTimeout(() => {
+            window.location.href = window.location.origin + window.location.pathname;
+        }, 2000);
+    }
+}
+
+// Копирование ссылки
 function copyRoomLink() {
-    copyToClipboard(window.location.href);
-    showNotification('Ссылка на комнату скопирована');
-}
-
-// Копирование в буфер обмена
-function copyToClipboard(text) {
-    navigator.clipboard.writeText(text).then(() => {
-        console.log('Скопировано в буфер:', text);
-    }).catch(err => {
-        console.error('Ошибка копирования:', err);
-        // Fallback для старых браузеров
-        const textArea = document.createElement('textarea');
-        textArea.value = text;
-        document.body.appendChild(textArea);
-        textArea.select();
-        document.execCommand('copy');
-        document.body.removeChild(textArea);
-    });
+    const link = window.location.href;
+    copyToClipboard(link);
+    showNotification('Ссылка скопирована');
 }
 
 // Шаринг ссылки
 function shareLink(platform) {
     const url = encodeURIComponent(window.location.href);
-    const text = encodeURIComponent('Присоединяйся к моему видеозвонку на Lap Video Online!');
+    const text = encodeURIComponent('Присоединяйся к видеозвонку!');
     
     let shareUrl;
     
@@ -486,7 +475,7 @@ function shareLink(platform) {
             shareUrl = `https://t.me/share/url?url=${url}&text=${text}`;
             break;
         case 'email':
-            shareUrl = `mailto:?subject=Приглашение на видеозвонок&body=${text}%0A%0A${url}`;
+            shareUrl = `mailto:?subject=Видеозвонок&body=${text}%0A%0A${url}`;
             break;
         default:
             return;
@@ -494,54 +483,124 @@ function shareLink(platform) {
     
     window.open(shareUrl, '_blank');
     inviteModal.classList.remove('active');
-    showNotification(`Открывается ${platform}...`);
 }
 
-// Показать уведомление
-function showNotification(message, type = 'success') {
-    notificationText.textContent = message;
+// Настройка обработчиков событий
+function setupEventListeners() {
+    // Основные кнопки
+    toggleCameraBtn.addEventListener('click', toggleCamera);
+    toggleMicBtn.addEventListener('click', toggleMicrophone);
+    shareScreenBtn.addEventListener('click', toggleScreenShare);
+    rotateCameraBtn.addEventListener('click', rotateCamera);
+    inviteBtn.addEventListener('click', () => inviteModal.classList.add('active'));
+    endCallBtn.addEventListener('click', endCall);
+    copyRoomBtn.addEventListener('click', copyRoomLink);
     
-    // Установка цвета в зависимости от типа
-    if (type === 'error') {
-        notification.style.background = 'linear-gradient(90deg, #ef4444, #f87171)';
-    } else if (type === 'warning') {
-        notification.style.background = 'linear-gradient(90deg, #f59e0b, #fbbf24)';
-    } else {
-        notification.style.background = 'linear-gradient(90deg, #10b981, #34d399)';
+    // Модальное окно
+    closeModal.addEventListener('click', () => inviteModal.classList.remove('active'));
+    copyInviteLink.addEventListener('click', () => {
+        copyToClipboard(inviteLink.value);
+        showNotification('Ссылка скопирована');
+    });
+    
+    // Кнопки шаринга
+    document.querySelectorAll('.share-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const platform = this.classList[1];
+            shareLink(platform);
+        });
+    });
+    
+    // Клик вне модального
+    window.addEventListener('click', (e) => {
+        if (e.target === inviteModal) {
+            inviteModal.classList.remove('active');
+        }
+    });
+    
+    // Адаптация для мобильных: тапы вместо ховеров
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    if (isMobile) {
+        document.querySelectorAll('.control-btn').forEach(btn => {
+            btn.addEventListener('touchstart', function() {
+                this.style.transform = 'scale(0.95)';
+            });
+            btn.addEventListener('touchend', function() {
+                this.style.transform = '';
+            });
+        });
     }
     
-    notification.classList.add('show');
-    
-    // Автоскрытие через 4 секунды
-    setTimeout(() => {
-        notification.classList.remove('show');
-    }, 4000);
+    // Ориентация экрана на мобильных
+    if (isMobile) {
+        window.addEventListener('orientationchange', () => {
+            setTimeout(() => {
+                showNotification('Поверните экран для лучшего вида', 'warning');
+            }, 1000);
+        });
+    }
 }
 
-// Обновление статусов
+// Инициализация при загрузке
+async function init() {
+    try {
+        showNotification('Запуск Lap Video Online...');
+        
+        // Настройка обработчиков
+        setupEventListeners();
+        
+        // Запуск камеры
+        const cameraStarted = await startLocalCamera();
+        if (!cameraStarted) return;
+        
+        // Инициализация Peer соединения
+        await initPeerConnection();
+        
+        // Показать статус готовности
+        setTimeout(() => {
+            showNotification('Готово к звонку! Отправьте ссылку собеседнику');
+        }, 1000);
+        
+        // Обновление статусов
+        updateStatusIndicators();
+        
+    } catch (error) {
+        console.error('Ошибка инициализации:', error);
+        showNotification('Ошибка запуска приложения', 'error');
+    }
+}
+
+// Обновление индикаторов статуса
 function updateStatusIndicators() {
-    // Обновление статуса WebRTC
     const webrtcStatus = document.getElementById('webrtcStatus');
     const videoTechStatus = document.getElementById('videoTechStatus');
     
     if (typeof RTCPeerConnection !== 'undefined') {
-        webrtcStatus.textContent = 'Поддерживается';
+        webrtcStatus.textContent = 'Активен';
         webrtcStatus.style.color = '#10b981';
-        videoTechStatus.textContent = 'WebRTC (P2P)';
+        videoTechStatus.textContent = 'WebRTC';
     } else {
         webrtcStatus.textContent = 'Не поддерживается';
         webrtcStatus.style.color = '#ef4444';
-        videoTechStatus.textContent = 'Резервный режим';
+        videoTechStatus.textContent = 'Недоступно';
     }
 }
 
-// Инициализация статусов
-updateStatusIndicators();
+// Запуск при загрузке страницы
+window.addEventListener('DOMContentLoaded', init);
 
-// Обработка закрытия страницы
+// Предупреждение при закрытии
 window.addEventListener('beforeunload', (e) => {
-    if (peer && peer.connections && Object.keys(peer.connections).length > 0) {
+    if (currentCall || (peer && !peer.disconnected)) {
         e.preventDefault();
-        e.returnValue = 'У вас активный видеозвонок. Вы уверены, что хотите уйти?';
+        e.returnValue = 'У вас активный видеозвонок. Закрыть страницу?';
+    }
+});
+
+// Автоматическое восстановление при потере фокуса (для мобильных)
+window.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && peer && peer.disconnected) {
+        showNotification('Переподключение...', 'warning');
+        setTimeout(() => initPeerConnection(), 1000);
     }
 });
